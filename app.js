@@ -1,0 +1,227 @@
+import __dirname from "./utils.js";
+import chatRoute from "./routers/chatRouter.js";
+import express from "express";
+import handlebars from "express-handlebars";
+import { Server } from "socket.io";
+import messageRoute from "./routers/messageRouter.js";
+import { messageModel } from "./DAO/models/chatModel.js";
+import fs from "fs";
+import viewsRouter from "./routers/viewsRouter.js";
+import productsRouteDB from "./routers/productsRouteDB.js"
+import cartsRouteDB from "./routers/cartsRouteDB.js"
+import loginRouter from "./routers/loginRoute.js"
+import signupRouter from "./routers/signupRoute.js"
+import sessionsRouter from "./routers/sessionsRoute.js";
+import currentUser from "./routers/sessionsRoute.js"
+import mongoose from "mongoose";
+import session from 'express-session';
+import MongoStore from 'connect-mongo';
+import * as dotenv from "dotenv";
+import forgotRoutes from "./routers/forgotRoutes.js"
+import passport from "passport";
+import initializePassport from "./config/passportConfig.js";
+import nodemailer from "nodemailer"
+//import  Twilio from "twilio";
+import { failRegister } from "./Controllers/sessionsRouteController.js";
+
+
+const app = express();
+const PORT = 8080;
+dotenv.config();
+
+const messages = [];
+
+
+//Consts Mongo
+const USER_MONGO=process.env.USER_MONGO
+const PASS_MONGO=process.env.PASS_MONGO
+const DB_MONGO=process.env.DB_MONGO
+
+
+// Configuracion Express.
+app.engine("handlebars", handlebars.engine());
+app.set("views", __dirname + "/public/views");
+app.set("/public/views");
+app.set("view engine", "handlebars");
+app.use(express.static(__dirname + "/public"));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
+app.post("/socketMessage", (req, res) => {
+  const { message } = req.body;
+  socketServer.emit("message", message);
+
+  res.send("ok");
+});
+
+
+app.use(session({
+  store: MongoStore.create({
+      mongoUrl:`mongodb+srv://12345:12345@cluster0.xoj6laj.mongodb.net/?retryWrites=true&w=majority`,
+      mongoOptions:{useNewUrlParser:true,useUnifiedTopology:true},
+      ttl:15
+  }),
+  secret:'coderhouse',
+  resave:true,
+  saveUninitialized:true
+}))
+
+initializePassport();
+app.use(passport.initialize());
+app.use(passport.session());
+
+
+// Middleware para los datos de sesión.
+app.use((req, res, next)=>{     
+  res.locals.session = req.session;
+  next();
+})
+
+
+
+const httpServer = app.listen(PORT, () => {
+  console.log(`Server on , in port: ${PORT}`);
+});
+
+const socketServer = new Server(httpServer);
+
+const readJson = async () => {
+  const data = await fs.readFileSync("./database/productos.JSON", "utf-8");
+  const products = await JSON.parse(data);
+  return products;
+};
+
+const writeJson = async (data) => {
+  const dataToWrite = await JSON.stringify(data, null, "\t");
+  await fs.writeFileSync("./database/productos.JSON", dataToWrite);
+};
+
+const socketProductos = socketServer.of("/");
+
+socketProductos.on("connection", (socket) => {
+  console.log("connect new user");
+
+  socket.on("message", async (data) => {
+    let productos = await readJson();
+
+    productos.push({ title: data });
+
+    await writeJson(productos);
+
+    socketProductos.emit("paragraph", productos); //productos lee el archivo
+  });
+});
+
+const socketChat = socketServer.of("/chat");
+
+socketChat.on("connection", (socket) => {
+  console.log("connect new user!");
+  socket.on("new-user", (data) => {
+    socket.user = data.user;
+    socket.id = data.id;
+    socketChat.emit("connect new user", {
+      user: socket.user,
+      id: socket.id,
+    });
+  });
+  socket.on("message", (data) => {
+    messages.push(data);
+    socketChat.emit("messageLogs", messages);
+    messageModel.create(data);
+  });
+});
+
+ const environment = async () => {
+   try {
+     await mongoose.connect (
+   `mongodb+srv://${USER_MONGO}:${PASS_MONGO}@cluster0.xoj6laj.mongodb.net/${DB_MONGO}?retryWrites=true&w=majority`,
+   
+    );
+`mongodb+srv://12345:12345@cluster0.xoj6laj.mongodb.net/?retryWrites=true&w=majority`; 
+    console.log("Conectado a la base de datos");
+  } catch (error) {
+    console.log(`Error al conectar a a la base de datos: ${error}`);
+  }
+};
+
+
+const isValidStartDB = () => {
+  if (USER_MONGO&& PASS_MONGO) return true;
+  else return false;
+};
+
+
+
+// Rutas.
+app.use("/", viewsRouter);
+app.use("/chat", chatRoute);
+app.use("/messages", messageRoute);
+app.use("/products", productsRouteDB)
+app.use("/api/carts", cartsRouteDB)
+app.use("/login", loginRouter )
+app.use("/signup", signupRouter)
+app.use('/api/sessions/', sessionsRouter);
+app.use('/logout', sessionsRouter)
+app.use('/forgot', forgotRoutes)
+app.use ("/current" , currentUser)
+app.use("/failregister", failRegister)
+
+//inicializar el envio de mail
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  port:587,
+  auth:{
+    user:"gonzalorodrigo030675@gmail.com",
+    pass:"ZapallitO24566684$&?"
+  }
+
+})
+
+app.get('/mail', async (req,res) =>{
+  let result = await transporter.sendMail({
+    from:'CoderHouse <coderhouse37570@gmail.com',
+    to:'gonzalorodrigo030675@gmail.com',
+    subject:'Prueba de Envio de Correo',
+    text:'Este es un mail de prueba',
+    html: '<h1>Correo ---> de prueba!!!</h1>'
+
+  })
+  res.send('Correo Enviado')
+})
+
+
+// const TwilioAccountSid = '12345';
+// const TwilioAuthToken= "12345";
+// const TwilioPhoneNumber="+549341156668278"
+
+// const client = Twilio (
+//   TwilioAccountSid,
+//   TwilioAuthToken,
+//   TwilioPhoneNumber
+// )
+
+// app.get('/mail', async (req,res) =>{
+//   let result = await client.messages.create({
+//     from:TwilioPhoneNumber,
+//     to:"+549341156668278",
+//     body: "Mensaje ---> de Prueba"
+// })
+
+// res.send ("SMS Enviado")
+// })
+
+// app.post('/customSMS', async (req,res) =>{
+//   let {name, product} = req.body
+//   let result = await client.messages.create({
+//     from:TwilioPhoneNumber,
+//     to:"+549341156668278",
+//     body: ` Hola ${name}. Gracias por tu compra. Tu producto es ${product}`
+// })
+
+// res.send ("SMS Enviado")
+// })
+
+// console.log("isValidStartDB", isValidStartDB());
+// isValidStartDB() && environment();
